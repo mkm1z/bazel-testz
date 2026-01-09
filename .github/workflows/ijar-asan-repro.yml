@@ -1,0 +1,63 @@
+name: ijar-asan-repro
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PoC repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential python3 git unzip zip default-jdk curl
+
+      - name: Install Bazelisk (as bazel)
+        run: |
+          curl -L -o bazelisk https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64
+          chmod +x bazelisk
+          sudo mv bazelisk /usr/local/bin/bazel
+          bazel --version
+
+      # This should generate bad.jar via your repo's genrule (make_bad_jar)
+      - name: Build PoC target (generates bad.jar)
+        run: |
+          bazel build //:victim_lib --subcommands --verbose_failures || true
+          ls -la bad.jar || true
+
+      - name: Checkout Bazel source
+        run: |
+          git clone https://github.com/bazelbuild/bazel.git bazel-src
+
+      - name: Build ASAN-instrumented ijar
+        run: |
+          cd bazel-src
+          bazel clean
+          bazel build -c dbg \
+            --copt=-g --cxxopt=-g \
+            --copt=-fsanitize=address --cxxopt=-fsanitize=address \
+            --linkopt=-fsanitize=address \
+            //third_party/ijar:ijar
+          ls -la bazel-bin/third_party/ijar/ijar
+
+      - name: Run ASAN ijar on bad.jar and save log
+        run: |
+          cd bazel-src
+          ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:color=0 \
+            ./bazel-bin/third_party/ijar/ijar "$GITHUB_WORKSPACE/bad.jar" out.jar \
+            > "$GITHUB_WORKSPACE/asan_log.txt" 2>&1 || true
+          tail -n 120 "$GITHUB_WORKSPACE/asan_log.txt" || true
+          # Optional: fail if ASAN pattern is not found (keeps CI strict)
+          grep -q "AddressSanitizer: heap-buffer-overflow" "$GITHUB_WORKSPACE/asan_log.txt"
+
+      - name: Upload ASAN log artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan_log
+          path: asan_log.txt
