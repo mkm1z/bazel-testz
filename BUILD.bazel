@@ -1,0 +1,29 @@
+# This genrule generates the malicious class and packages it into bad.jar.
+genrule(
+    name = "make_bad_jar",
+    srcs = ["build_bad_class.py"],
+    outs = ["bad.jar"],
+    cmd = """
+      set -e
+      rm -rf bad
+      python3 $(location build_bad_class.py)
+      mkdir -p bad
+      zip -q bad.jar bad/Test.class
+      cp bad.jar $@
+    """,
+    tools = [],
+)
+
+# Import the crafted jar as a dependency.
+java_import(
+    name = "evil_dep",
+    jars = [":make_bad_jar"],
+)
+
+# A benign Java target that depends on the imported jar.
+# Building this normally causes Bazel to invoke ijar on dependencies (interface jar generation).
+java_library(
+    name = "victim_lib",
+    srcs = glob(["src/main/java/**/*.java"]),
+    deps = [":evil_dep"],
+)
