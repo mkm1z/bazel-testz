@@ -1,0 +1,4 @@
+module(
+    name = "ijar_opaque_attr_overflow_poc",
+    version = "0.0.1",
+)
